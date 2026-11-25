@@ -1,0 +1,12 @@
+body {
+  margin: 0;
+  font-family: system-ui, Arial, Helvetica, sans-serif;
+  direction: rtl;
+  background: #ffffff;
+  color: #213547;
+}
+
+input, select, textarea, button {
+  font-family: inherit;
+  font-size: 1em;
+}

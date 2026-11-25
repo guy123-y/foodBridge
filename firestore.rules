@@ -1,0 +1,107 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // למשתמש יש כרטיס פרופיל (רק אז מותר לו לפרסם או לאסוף)
+    function hasProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // ---------- כרטיסי פרופיל ----------
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'email', 'accountType', 'companyName', 'website', 'phone'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.accountType in ['private', 'business']
+        && request.resource.data.email == request.auth.token.email;
+      allow update, delete: if false;
+    }
+
+    // ---------- פרסומי מזון ----------
+    // מחזור חיים: available -> requested -> approved -> completed
+    match /food_posts/{postId} {
+      allow read: if signedIn();
+
+      // כל משתמש עם פרופיל יכול לפרסם, והמועד חייב להיות בעתיד
+      allow create: if hasProfile()
+        && request.resource.data.keys().hasOnly([
+             'ownerId', 'ownerName', 'title', 'quantity', 'isFresh', 'pickupAddress',
+             'pickupDetails', 'pickupUntil', 'status', 'claimedBy', 'claimedByName', 'claimedAt', 'createdAt'
+           ])
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.isFresh is bool
+        && request.resource.data.pickupUntil is timestamp
+        && request.resource.data.pickupUntil > request.time
+        && request.resource.data.status == 'available'
+        && request.resource.data.claimedBy == null;
+
+      allow update: if canRequest() || canApprove() || canReject() || canComplete();
+
+      allow delete: if false;
+
+      // קוד האיסוף שמור כאן בנפרד - רק המפרסם והאוסף שלו יכולים לקרוא אותו
+      match /secret/{docId} {
+        function post() {
+          return get(/databases/$(database)/documents/food_posts/$(postId)).data;
+        }
+        allow read: if signedIn()
+          && (post().ownerId == request.auth.uid || post().claimedBy == request.auth.uid);
+        allow write: if signedIn() && post().ownerId == request.auth.uid;
+      }
+    }
+
+    function isOwner() {
+      return signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    // אוסף מבקש לאסוף (לא את הפרסום של עצמו). הבדיקה אטומית - שני אנשים לא יכולים לבקש יחד
+    function canRequest() {
+      return hasProfile()
+        && resource.data.ownerId != request.auth.uid
+        && resource.data.status == 'available'
+        && resource.data.pickupUntil > request.time
+        && request.resource.data.status == 'requested'
+        && request.resource.data.claimedBy == request.auth.uid
+        && request.resource.data.claimedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'claimedBy', 'claimedByName', 'claimedAt']);
+    }
+
+    // המפרסם מאשר את הבקשה
+    function canApprove() {
+      return isOwner()
+        && resource.data.status == 'requested'
+        && request.resource.data.status == 'approved'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+    }
+
+    // המפרסם דוחה את הבקשה - הפרסום חוזר להיות זמין
+    function canReject() {
+      return isOwner()
+        && resource.data.status == 'requested'
+        && request.resource.data.status == 'available'
+        && request.resource.data.claimedBy == null
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'claimedBy', 'claimedByName', 'claimedAt']);
+    }
+
+    // המפרסם מסמן שהאיסוף הושלם (אחרי שבדק את הקוד)
+    function canComplete() {
+      return isOwner()
+        && resource.data.status == 'approved'
+        && request.resource.data.status == 'completed'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+    }
+  }
+}

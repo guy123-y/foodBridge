@@ -1,0 +1,18 @@
+# תלויות ותוצרי build
+node_modules/
+dist/
+
+# קבצים עם סיסמאות / מידע פרטי
+users.txt
+.env
+.env.*
+
+# מסמכי הפרויקט (מכילים שמות וחתימות)
+*.docx
+*.pdf
+
+# קבצי מערכת ועורך
+.DS_Store
+Thumbs.db
+.vscode/
+*.log
